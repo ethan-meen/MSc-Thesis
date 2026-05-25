@@ -157,7 +157,6 @@ def create_dfs_4_gempy(azimuth, dip):
     #Remove nans 
     df = df.dropna() 
 
-
     df = df.rename(columns={'horizon':'formation', 'x':'X', 'y':'Y'})
     df = df[['name', 'X','Y','Z','formation']]
     df['formation'] = df['formation'].replace({'B1':'unknown', 'M1':'B1', 'B2':'M1', 'M2':'B2', 'B3':'M2', 'M3':'B3', 'B4':'M3'}) #change top to bottom (for gempy)
@@ -166,7 +165,7 @@ def create_dfs_4_gempy(azimuth, dip):
     df = df[df["Z"] != 0].reset_index(drop=True)
 
     # open DEM
-    dem_path = "../DEM/subset_dem.tif"
+    dem_path = "subset_dem.tif"
     with rasterio.open(dem_path) as src:
         # sample DEM elevations at XY points
         coords = list(zip(df["X"], df["Y"]))
@@ -174,7 +173,7 @@ def create_dfs_4_gempy(azimuth, dip):
     df['Z'] = dem_values - df["Z"]
 
     #save surface points
-    df[['X', 'Y', 'Z', 'formation']].to_csv('../gempy/df_surfaces_4gempy.csv', index=False)
+    df[['X', 'Y', 'Z', 'formation']].to_csv('gempy_inputs/df_surfaces_4gempy.csv', index=False)
     display(df[['X', 'Y', 'Z', 'formation']])
 
     #take an appropriate well for orientation values
@@ -185,5 +184,5 @@ def create_dfs_4_gempy(azimuth, dip):
     df['polarity'] = [1]*len(df) #Polarity is typically defined as 1 (normal,younging direction matches orientation vector) or -1 (reversed)
     df = df.iloc[:, [0, 1, 2, 3, 5, 6, 7, 4]] #reorder
 
-    df[['X', 'Y', 'Z', 'azimuth', 'dip', 'polarity', 'formation']].to_csv('../gempy/df_orientations_4gempy.csv', index=False)
+    df[['X', 'Y', 'Z', 'azimuth', 'dip', 'polarity', 'formation']].to_csv('gempy_inputs/df_orientations_4gempy.csv', index=False)
     display(df)
