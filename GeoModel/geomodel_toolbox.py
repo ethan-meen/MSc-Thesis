@@ -11,7 +11,7 @@ from affine import Affine
 def create_subset_dem(x_lims, y_lims, target_resolution, original_dem= "IslandsDEMv1.0_2x2m_zmasl_isn93_57.tif"): 
     #Original file downloaded from https://dem.gis.is/mapview/?application=DEM
 
-    scale = target_resolution / 10 #= original_resolution
+    scale = target_resolution / 2 #= original_resolution
 
     with rasterio.open(original_dem) as src:
 
@@ -86,10 +86,10 @@ def plot_dem(dem):
 def get_info_dem(dem):
     with rasterio.open(dem) as src:
 
-    print(src.crs)
-    print(src.bounds)
-    print(src.res)
-    print(src.width, src.height)
+        print('projection:', src.crs)
+        print(src.bounds)
+        print('res:',src.res)
+        print('nx, ny:', src.width, src.height)
 
 def create_dfs_4_gempy(azimuth, dip):
 
