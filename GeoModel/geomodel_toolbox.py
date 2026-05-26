@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from affine import Affine
+import pyvista as pv
 
 def create_subset_dem(x_lims, y_lims, target_resolution, original_dem= "IslandsDEMv1.0_2x2m_zmasl_isn93_57.tif"): 
     #Original file downloaded from https://dem.gis.is/mapview/?application=DEM
@@ -186,3 +187,73 @@ def create_dfs_4_gempy(azimuth, dip):
 
     df[['X', 'Y', 'Z', 'azimuth', 'dip', 'polarity', 'formation']].to_csv('gempy_inputs/df_orientations_4gempy.csv', index=False)
     display(df)
+
+def plot_3d_model(geomodel, x, y, z, downsampling=1, show_empty=False): 
+
+    data = geomodel[::downsampling, ::downsampling, ::downsampling]
+
+    data = data.astype(np.float32)
+
+    grid = pv.ImageData()
+
+    grid.dimensions = np.array(data.shape) + 1
+
+    # Coordenada inicial
+    grid.origin = (
+        x.min(),
+        y.min(),
+        z.min()
+    )
+
+    # Separación entre puntos
+    grid.spacing = (
+        x[1] - x[0],
+        y[1] - y[0],
+        z[1] - z[0]
+    )
+
+    grid.cell_data["values"] = data.flatten(order="F")
+
+    if show_empty: 
+        thresholded = grid
+    else: 
+        thresholded = grid.threshold(
+            value=(1, 8),
+            scalars="values"
+        )
+
+    plotter = pv.Plotter()
+
+    plotter.add_mesh(
+        thresholded,
+        scalars="values",
+        cmap="viridis",
+        opacity=1.0
+    )
+
+    plotter.show_grid()
+    plotter.show_axes()
+
+    plotter.show()
+
+def save_gempy_results(geomodel):
+    lith = geomodel.solutions.raw_arrays.lith_block #* geo_model.solutions.raw_arrays.mask_matrix
+    res = geomodel.grid.regular_grid.resolution #10, 10, 60
+    lith_3d = lith.reshape(res)
+
+    lith_topo = lith_3d * (~geomodel.grid.topography.topography_mask) #why is it inverted?! :/
+
+    #geo_model.solutions.raw_arrays.mask_matrix #wtf is this?
+
+    x = np.unique(geomodel.grid.regular_grid.values[:, 0])
+    y = np.unique(geomodel.grid.regular_grid.values[:, 1])
+    z = np.unique(geomodel.grid.regular_grid.values[:, 2])
+
+    #sanity check
+    #print(x.shape, y.shape, z.shape)
+
+    #save the model
+    np.save("gempy_outputs/lith_topo.npy", lith_topo)
+    np.save('gempy_outputs/x_array.npy', x)
+    np.save('gempy_outputs/y_array.npy', y)
+    np.save('gempy_outputs/z_array.npy', z)
