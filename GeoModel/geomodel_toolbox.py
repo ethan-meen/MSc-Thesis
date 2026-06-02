@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 from affine import Affine
 import pyvista as pv
 
+import plotly.graph_objects as go
+
 def create_subset_dem(x_lims, y_lims, target_resolution, original_dem= "IslandsDEMv1.0_2x2m_zmasl_isn93_57.tif"): 
     #Original file downloaded from https://dem.gis.is/mapview/?application=DEM
 
@@ -92,7 +94,7 @@ def get_info_dem(dem):
         print('res:',src.res)
         print('nx, ny:', src.width, src.height)
 
-def create_dfs_4_gempy(azimuth, dip):
+def create_dfs_4_gempy(azimuth, dip, silent=True):
 
     #horizon data: taken from report
     df_horizons = pd.DataFrame({
@@ -175,7 +177,8 @@ def create_dfs_4_gempy(azimuth, dip):
 
     #save surface points
     df[['X', 'Y', 'Z', 'formation']].to_csv('gempy_inputs/df_surfaces_4gempy.csv', index=False)
-    display(df[['X', 'Y', 'Z', 'formation']])
+    if silent==False: 
+        display(df[['X', 'Y', 'Z', 'formation']])
 
     #take an appropriate well for orientation values
     #df = df.loc[df['name'].isin(['MG-35', 'MG-19', 'MG-23', 'MG-25'])]
@@ -186,7 +189,8 @@ def create_dfs_4_gempy(azimuth, dip):
     df = df.iloc[:, [0, 1, 2, 3, 5, 6, 7, 4]] #reorder
 
     df[['X', 'Y', 'Z', 'azimuth', 'dip', 'polarity', 'formation']].to_csv('gempy_inputs/df_orientations_4gempy.csv', index=False)
-    display(df)
+    if silent==False:
+        display(df)
 
 def plot_3d_model(geomodel, x, y, z, downsampling=1, show_empty=False): 
 
@@ -257,3 +261,106 @@ def save_gempy_results(geomodel):
     np.save('gempy_outputs/x_array.npy', x)
     np.save('gempy_outputs/y_array.npy', y)
     np.save('gempy_outputs/z_array.npy', z)
+
+def generate_fault_model(x_lims, y_lims, z_lims, resolution, aperture, radius, azimuth, density, plot_results=False):
+    # A. Total number of fractures 
+    vol = np.abs(np.subtract(*x_lims) * np.subtract(*y_lims) * np.subtract(*z_lims)) #[m3]
+    N = np.random.poisson(lam=vol*density)
+
+    # D. Define grid
+    x = np.linspace(*x_lims, resolution[0])
+    y = np.linspace(*y_lims, resolution[1])
+    z = np.linspace(*z_lims, resolution[2])
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+
+    # B. Generate centers
+    x_0 = np.random.choice(x, size=N)
+    y_0 = np.random.choice(y, size=N)
+    z_0 = np.random.choice(z, size=N)
+
+    # C. Randomize apertures, radii and orientations for each fracture
+    aperture_n = np.random.normal(loc=aperture[0], scale=aperture[1], size=N)
+    radius_n = np.random.normal(loc=radius[0], scale=radius[1], size=N)
+    azimuth_n = np.random.normal(loc=azimuth[0], scale=azimuth[1], size=N)
+    azimuth_n = np.deg2rad(azimuth_n)
+
+    # E. Define directions
+    east  = np.array([1.0, 0.0, 0.0])
+    north = np.array([0.0, 1.0, 0.0])
+    z_hat = np.array([0.0, 0.0, 1.0])
+
+    # F. Create mask
+    mask = np.zeros(X.shape, dtype=bool)
+
+    # G. Create faults (one by one)
+    for i in range(N):
+
+        #direccciones
+        u = np.cos(azimuth_n[i]) * north + np.sin(azimuth_n[i]) * east
+        v = -np.sin(azimuth_n[i]) * north + np.cos(azimuth_n[i]) * east
+
+        C = np.array([x_0[i], y_0[i], z_0[i]])
+
+        # vector desde centro a todos los puntos
+        RX = X - C[0]
+        RY = Y - C[1]
+        RZ = Z - C[2]
+
+        # eje alineado con azimuth
+        s = RX * u[0] + RY * u[1] + RZ * u[2]
+
+        # vertical
+        t = RZ
+
+        # perpendicular horizontal
+        w = RX * v[0] + RY * v[1] + RZ * v[2]
+
+        # disco en plano (u,z)
+        inside_disk = (s**2 + t**2) <= radius_n[i]**2
+
+        # espesor perpendicular al azimuth
+        along_azimuth = np.abs(w) <= aperture_n[i] / 2
+
+        mask |= (inside_disk & along_azimuth)
+
+    # E. Save parameters (to correlate prior)
+
+    df = pd.DataFrame({
+            'aperture': [aperture], 
+        'radius': [radius],
+            'azimuth': [azimuth]
+    })
+
+    df = df.rename(index={0: "mean"})
+
+    # Plot results
+    if plot_results: 
+        ix, iy, iz = np.where(mask)
+
+        fig = go.Figure(data=[
+            go.Scatter3d(
+                x=x[ix],
+                y=y[iy],
+                z=z[iz],
+                mode='markers',
+                marker=dict(
+                    size=2,
+                    color=z[iz],
+                    colorscale='Viridis',
+                    opacity=0.6
+                )
+            )
+        ])
+
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='X',
+                yaxis_title='Y',
+                zaxis_title='Z',
+                aspectmode='data'
+            )
+        )
+
+        fig.show()
+
+    return mask, df
