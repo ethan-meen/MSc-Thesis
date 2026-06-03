@@ -245,6 +245,64 @@ def plot_3d_model(geomodel, x, y, z, downsampling=1, show_empty=False):
 
     plotter.show()
 
+
+def plot_3d_model(
+    geomodel, x, y, z,
+    downsampling=1,
+    show_empty=False,
+    scale="linear",   # "linear" or "log"
+    log_eps=1e-6      # safety offset for log
+):
+
+    data = geomodel[::downsampling, ::downsampling, ::downsampling].astype(np.float32)
+
+    # --- scaling choice ---
+    if scale == "log":
+        # ensure positivity
+        data = np.maximum(data, log_eps)
+        data = np.log10(data)
+    elif scale == "linear":
+        pass
+    else:
+        raise ValueError("scale must be 'linear' or 'log'")
+
+    grid = pv.ImageData()
+    grid.dimensions = np.array(data.shape) + 1
+
+    grid.origin = (x.min(), y.min(), z.min())
+
+    grid.spacing = (
+        x[1] - x[0],
+        y[1] - y[0],
+        z[1] - z[0]
+    )
+
+    grid.cell_data["values"] = data.flatten(order="F")
+
+    if scale == "log":
+        thresholded = grid.threshold(
+            value=(-5.99, data.max()),
+            scalars="values"
+        )
+    else:
+        thresholded = grid.threshold(
+            value=(1e-3, 1000),
+            scalars="values"
+        )
+
+    plotter = pv.Plotter()
+
+    plotter.add_mesh(
+        thresholded,
+        scalars="values",
+        cmap="viridis",
+        opacity=1.0
+    )
+
+    plotter.show_grid()
+    plotter.show_axes()
+    plotter.show()
+
 def save_gempy_results(geomodel):
     lith = geomodel.solutions.raw_arrays.lith_block #* geo_model.solutions.raw_arrays.mask_matrix
     res = geomodel.grid.regular_grid.resolution #10, 10, 60
