@@ -227,7 +227,7 @@ def plot_3d_model(geomodel, x, y, z, downsampling=1, show_empty=False):
         thresholded = grid
     else: 
         thresholded = grid.threshold(
-            value=(1, 1000),
+            value=(1e-3, 1000),
             scalars="values"
         )
 
