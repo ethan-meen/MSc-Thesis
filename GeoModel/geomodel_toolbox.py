@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 from affine import Affine
 import pyvista as pv
 
+import gempy as gp
+import gempy_viewer as gpv
+import os 
+
 import plotly.graph_objects as go
 
 def create_subset_dem(x_lims, y_lims, target_resolution, original_dem= "IslandsDEMv1.0_2x2m_zmasl_isn93_57.tif"): 
@@ -93,6 +97,7 @@ def get_info_dem(dem):
         print(src.bounds)
         print('res:',src.res)
         print('nx, ny:', src.width, src.height)
+        print('z_min, z_max:', src.read(1, masked=True).min(), src.read(1, masked=True).max())
 
 def create_dfs_4_gempy(azimuth, dip, silent=True):
 
@@ -141,7 +146,7 @@ def create_dfs_4_gempy(azimuth, dip, silent=True):
     })
 
     #borehole data (coordinates, etc.) taken from gisborhola.csv (find original link)
-    df_borehole = pd.read_csv('borehole_data.csv')
+    df_borehole = pd.read_csv('gempy_inputs/borehole_data.csv')
 
     #Melt dataframe
     df = df_horizons.melt(
@@ -222,7 +227,7 @@ def plot_3d_model(geomodel, x, y, z, downsampling=1, show_empty=False):
         thresholded = grid
     else: 
         thresholded = grid.threshold(
-            value=(1, 8),
+            value=(1, 1000),
             scalars="values"
         )
 
@@ -262,3 +267,186 @@ def save_gempy_results(geomodel):
     np.save('gempy_outputs/y_array.npy', y)
     np.save('gempy_outputs/z_array.npy', z)
 
+def create_strat_model(x_lims, y_lims, z_lims, resolution, strat_azimuth, strat_dip, target_resolution=10): 
+    
+    # 1. Create DEM file: 
+    if os.path.isfile("subset_dem.tif"): 
+        pass
+    else: 
+        #Original file downloaded from https://dem.gis.is/mapview/?application=DEM (too big for github)
+        create_subset_dem(x_lims, y_lims, target_resolution=target_resolution) #NB: need to download original DEM 
+
+    # Plot and check DEM if required
+    #geomodel_toolbox.plot_dem('subset_dem.tif')
+    get_info_dem('subset_dem.tif')
+
+    # 2. Create/update input files for gempy: 
+    create_dfs_4_gempy(azimuth=strat_azimuth, dip=strat_dip)
+    
+
+    # 3. Use gempy to make model
+    extent = x_lims+y_lims+z_lims[::-1]
+
+    # Create instance of geomodel
+    geo_model = gp.create_geomodel(
+        project_name = 'tutorial_model',
+        extent=extent,
+        resolution=resolution,
+        importer_helper=gp.data.ImporterHelper(
+            path_to_orientations='gempy_inputs/df_orientations_4gempy.csv',
+            path_to_surface_points='gempy_inputs/df_surfaces_4gempy.csv'
+        )
+    )
+
+    # Add topography
+    gp.set_topography_from_file(
+        grid=geo_model.grid,
+        filepath='subset_dem.tif')
+
+    #Plot map
+    gpv.plot_2d(geo_model, show_topography=True, section_names=['topography'])
+
+    # Display a basic cross section of input data
+    gpv.plot_2d(geo_model, show_topography=True)
+
+    # Define structural groups and age/stratigraphic relationship
+    gp.map_stack_to_surfaces(
+        gempy_model=geo_model,
+        mapping_object={
+            "Strat_Series1": ('unknown', 'B1', 'M1', 'B2', 'M2', 'B3', 'M3')
+            }
+    )
+
+    # Compute a solution for the model (takes 17 mins. )
+    gp.compute_model(geo_model)
+
+    # Display the result in 2d section
+    gpv.plot_2d(geo_model, show_topography=True)
+
+    # Save the results
+    save_gempy_results(geomodel=geo_model)
+
+    # Import to plot
+    lith_topo = np.load('gempy_outputs/lith_topo.npy')
+    x_array = np.load('gempy_outputs/x_array.npy')
+    y_array = np.load('gempy_outputs/y_array.npy')
+    z_array = np.load('gempy_outputs/z_array.npy')
+
+    # Check sizes
+    #print(lith_topo.shape)
+    #print(x_array.shape, y_array.shape, z_array.shape)
+    
+    # Plot 3D model
+    plot_3d_model(geomodel=lith_topo, x=x_array, y=y_array, z=z_array, downsampling=1)
+
+def import_strat_model(downsampling_for_plotting=1, show_plot=True, show_info=False):
+    # Import saved files
+    lith_topo = np.load('gempy_outputs/lith_topo.npy')
+    x_array = np.load('gempy_outputs/x_array.npy')
+    y_array = np.load('gempy_outputs/y_array.npy')
+    z_array = np.load('gempy_outputs/z_array.npy')
+
+    if show_info: 
+        # Check sizes
+        print(lith_topo.shape)
+        print(x_array.shape, y_array.shape, z_array.shape)
+    
+    if show_plot: 
+        # Plot 3D model
+        plot_3d_model(geomodel=lith_topo, x=x_array, y=y_array, z=z_array, downsampling=downsampling_for_plotting)
+
+    return lith_topo, x_array, y_array, z_array
+
+def generate_fracture_model(x, y, z, aperture, radius, azimuth, density, show_plot=False):
+
+    # A. Total number of fractures
+    vol = ((x.max() - x.min()) * (y.max() - y.min()) * (z.max() - z.min()))
+
+    N = np.random.poisson(lam=vol * density)
+
+    # B. Create grid
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+
+    # C. Generate centers
+    x_0 = np.random.choice(x, size=N)
+    y_0 = np.random.choice(y, size=N)
+    z_0 = np.random.choice(z, size=N)
+
+    # D. Randomize apertures, radii and orientations
+    aperture_n = np.random.normal(aperture[0], aperture[1], size=N)
+    radius_n   = np.random.normal(radius[0], radius[1], size=N)
+
+    azimuth_n = np.random.normal(
+        azimuth[0],
+        azimuth[1],
+        size=N
+    )
+    azimuth_n = np.deg2rad(azimuth_n)
+
+    # E. Define directions
+    east  = np.array([1.0, 0.0, 0.0])
+    north = np.array([0.0, 1.0, 0.0])
+
+    mask = np.zeros(X.shape, dtype=bool)
+
+    # F. Create fractures
+    for i in range(N):
+
+        u = np.cos(azimuth_n[i]) * north + np.sin(azimuth_n[i]) * east
+        v = -np.sin(azimuth_n[i]) * north + np.cos(azimuth_n[i]) * east
+
+        C = np.array([x_0[i], y_0[i], z_0[i]])
+
+        RX = X - C[0]
+        RY = Y - C[1]
+        RZ = Z - C[2]
+
+        s = RX*u[0] + RY*u[1] + RZ*u[2]
+        t = RZ
+        w = RX*v[0] + RY*v[1] + RZ*v[2]
+
+        inside_disk = (s**2 + t**2) <= radius_n[i]**2
+        along_azimuth = np.abs(w) <= aperture_n[i]/2
+
+        mask |= (inside_disk & along_azimuth)
+
+    # Save parameters
+    df = pd.DataFrame({
+        "aperture": [aperture],
+        "radius": [radius],
+        "azimuth": [azimuth]
+    }, index=["mean"])
+
+    # Plot
+    if show_plot:
+        ix, iy, iz = np.where(mask)
+
+        fig = go.Figure(
+            data=[
+                go.Scatter3d(
+                    x=x[ix],
+                    y=y[iy],
+                    z=z[iz],
+                    mode="markers",
+                    marker=dict(
+                        size=2,
+                        color=z[iz],
+                        colorscale="Viridis",
+                        opacity=0.6
+                    )
+                )
+            ]
+        )
+
+        fig.update_layout(
+            scene=dict(
+                xaxis_title="X",
+                yaxis_title="Y",
+                zaxis_title="Z",
+                aspectmode="data"
+            )
+        )
+
+        fig.show()
+
+    return mask, df
