@@ -38,7 +38,7 @@ def model_to_grdecl(
     y_array,
     z_array,
     rock_props,
-    output_file="reservoir.grdecl"
+    output_file=["reservoir.grdecl", 'properties.in']
 ):
     """
     Convert a lithology cube into an Eclipse GRDECL file.
@@ -94,7 +94,7 @@ def model_to_grdecl(
     # WRITE FILE
     # --------------------------------------------------------
 
-    with open(output_file, "w") as f:
+    with open(output_file[0], "w") as f:
 
         # SPECGRID
         f.write("SPECGRID\n")
@@ -147,19 +147,32 @@ def model_to_grdecl(
         write_keyword_array(f, "ACTNUM", actnum)
 
         # FACIES
-        write_keyword_array(f, "FACIES", lith)
+        #write_keyword_array(f, "FACIES", lith)
+
+        # PORO
+        #write_keyword_array(f, "PORO", poro)
+
+        # PERMX
+        #write_keyword_array(f, "PERMX", permx)
+
+    print(f"Written: {output_file[0]}")
+    print(f"Grid dimensions: {NX} x {NY} x {NZ}")
+    print(f"Total cells: {NX * NY * NZ:,}")
+    print(f"Active cells: {actnum.sum():,}")
+    print(f"Inactive air cells: {(actnum == 0).sum():,}")
+
+    with open(output_file[1], "w") as f:
+
+        # FACIES
+        #write_keyword_array(f, "FACIES", lith)
 
         # PORO
         write_keyword_array(f, "PORO", poro)
 
         # PERMX
         write_keyword_array(f, "PERMX", permx)
-
-    print(f"Written: {output_file}")
-    print(f"Grid dimensions: {NX} x {NY} x {NZ}")
-    print(f"Total cells: {NX * NY * NZ:,}")
-    print(f"Active cells: {actnum.sum():,}")
-    print(f"Inactive air cells: {(actnum == 0).sum():,}")
+    
+    print(f"\nWritten: {output_file[1]}")
 
 
 def nearest_eclipse_index(value, axis):
