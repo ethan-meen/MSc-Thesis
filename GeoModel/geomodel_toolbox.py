@@ -15,6 +15,8 @@ import os
 
 import plotly.graph_objects as go
 
+import xtgeo
+
 def create_subset_dem(x_lims, y_lims, target_resolution, original_dem= "IslandsDEMv1.0_2x2m_zmasl_isn93_57.tif"): 
     #Original file downloaded from https://dem.gis.is/mapview/?application=DEM
 
@@ -197,54 +199,6 @@ def create_dfs_4_gempy(azimuth, dip, silent=True):
     if silent==False:
         display(df)
 
-def plot_3d_model(geomodel, x, y, z, downsampling=1, show_empty=False): 
-
-    data = geomodel[::downsampling, ::downsampling, ::downsampling]
-
-    data = data.astype(np.float32)
-
-    grid = pv.ImageData()
-
-    grid.dimensions = np.array(data.shape) + 1
-
-    # Coordenada inicial
-    grid.origin = (
-        x.min(),
-        y.min(),
-        z.min()
-    )
-
-    # Separación entre puntos
-    grid.spacing = (
-        x[1] - x[0],
-        y[1] - y[0],
-        z[1] - z[0]
-    )
-
-    grid.cell_data["values"] = data.flatten(order="F")
-
-    if show_empty: 
-        thresholded = grid
-    else: 
-        thresholded = grid.threshold(
-            value=(1e-3, 1000),
-            scalars="values"
-        )
-
-    plotter = pv.Plotter()
-
-    plotter.add_mesh(
-        thresholded,
-        scalars="values",
-        cmap="viridis",
-        opacity=1.0
-    )
-
-    plotter.show_grid()
-    plotter.show_axes()
-
-    plotter.show()
-
 
 def plot_3d_model(
     geomodel, x, y, z,
@@ -292,12 +246,20 @@ def plot_3d_model(
 
     plotter = pv.Plotter()
 
-    plotter.add_mesh(
-        thresholded,
-        scalars="values",
-        cmap="viridis",
-        opacity=1.0
-    )
+    if scale == 'log':
+        plotter.add_mesh(
+            thresholded,
+            scalars="log10(values)",
+            cmap="viridis",
+            opacity=1.0
+        )
+    else: 
+        plotter.add_mesh(
+            thresholded,
+            scalars="values",
+            cmap="viridis",
+            opacity=1.0
+        )
 
     plotter.show_grid()
     plotter.show_axes()
@@ -508,3 +470,225 @@ def generate_fracture_model(x, y, z, aperture, radius, azimuth, density, show_pl
         fig.show()
 
     return mask, df
+
+#Another one below: delete this one 
+def export_grdecl_from_geomodel(
+    geomodel,
+    x_array,
+    y_array,
+    z_array,
+    rock_types,
+    out_file="grid.grdecl"
+):
+    """
+    Export GRDECL with:
+    - ACTNUM
+    - FACIES (collapsed internally)
+    - PORO
+    - PERMX
+    """
+
+    # --- orientation ---
+    geomodel = geomodel[:, :, ::-1]
+    z_export = z_array[::-1]
+
+    nx, ny, nz = len(x_array), len(y_array), len(z_array)
+
+    dx = x_array[1] - x_array[0]
+    dy = y_array[1] - y_array[0]
+    dz = abs(z_export[1] - z_export[0])
+
+    grid = xtgeo.create_box_grid(
+        dimension=(nx, ny, nz),
+        origin=(
+            x_array[0] - dx / 2,
+            y_array[0] - dy / 2,
+            z_export[0] - dz / 2
+        ),
+        increment=(dx, dy, dz)
+    )
+
+    # =========================================================
+    # ACTNUM
+    # =========================================================
+    actnum_vals = (geomodel != 0).astype(int)
+
+    actnum = xtgeo.GridProperty(
+        grid,
+        name="ACTNUM",
+        values=actnum_vals,
+        discrete=True,
+    )
+
+    grid.set_actnum(actnum)
+
+    # =========================================================
+    # INTERNAL FACIES MAPPING (FIXED LOGIC)
+    # =========================================================
+    facies_3 = np.zeros_like(geomodel)
+
+    # M (matrix / hyaloclastites)
+    facies_3[np.isin(geomodel, [1, 3, 5, 7])] = 1
+
+    # B (basalts)
+    facies_3[np.isin(geomodel, [2, 4, 6, 8])] = 2
+
+    # F (fractures)
+    facies_3[geomodel == 9] = 3
+
+    facies = xtgeo.GridProperty(
+        grid,
+        name="FACIES",
+        values=facies_3,
+        discrete=True,
+    )
+
+    # =========================================================
+    # ROCK PHYSICS (USER-DEFINED ONLY)
+    # =========================================================
+    poro = np.zeros_like(geomodel, dtype=float)
+    permx = np.zeros_like(geomodel, dtype=float)
+
+    # NOTE: order must match facies_3 definition
+    rock_map = {
+        1: rock_types["M"],
+        2: rock_types["B"],
+        3: rock_types["F"],
+    }
+
+    for fid, props in rock_map.items():
+        mask = facies_3 == fid
+        poro[mask] = props["poro"]
+        permx[mask] = props["permx"]
+
+    # inactive cells
+    poro[actnum_vals == 0] = 0
+    permx[actnum_vals == 0] = 0
+
+    poro_prop = xtgeo.GridProperty(grid, name="PORO", values=poro)
+    perm_prop = xtgeo.GridProperty(grid, name="PERMX", values=permx)
+
+    # =========================================================
+    # EXPORT
+    # =========================================================
+    grid.to_file(out_file, fformat="grdecl")
+
+    #actnum.to_file(out_file, fformat="grdecl", append=True)
+    facies.to_file(out_file, fformat="grdecl", append=True)
+    poro_prop.to_file(out_file, fformat="grdecl", append=True)
+    perm_prop.to_file(out_file, fformat="grdecl", append=True)
+
+    return grid
+
+def export_grdecl_from_geomodel(
+    geomodel,
+    x_array,
+    y_array,
+    z_array,
+    rock_types,
+    out_file="grid.grdecl"
+):
+    import numpy as np
+    import xtgeo
+
+    # =========================================================
+    # KEEP ORIGINAL ORIENTATION (DO NOT REVERSE Z)
+    # =========================================================
+    geomodel = np.asarray(geomodel)
+    z_array = np.asarray(z_array)
+
+    nx, ny, nz = len(x_array), len(y_array), len(z_array)
+
+    dx = x_array[1] - x_array[0]
+    dy = y_array[1] - y_array[0]
+    dz = z_array[1] - z_array[0]   # assumes monotonic ordering
+
+    # Safety check (important)
+    if dz == 0:
+        raise ValueError("z_array has zero spacing or is not sorted correctly")
+
+    # =========================================================
+    # GRID ORIGIN (TOP CORNER)
+    # =========================================================
+    grid = xtgeo.create_box_grid(
+        dimension=(nx, ny, nz),
+        origin=(
+            x_array[0] - dx / 2,
+            y_array[0] - dy / 2,
+            z_array[0] - dz / 2   # TOP is first Z value
+        ),
+        increment=(dx, dy, dz)
+    )
+
+    # =========================================================
+    # ACTNUM
+    # =========================================================
+    actnum_vals = (geomodel != 0).astype(int)
+
+    actnum = xtgeo.GridProperty(
+        grid,
+        name="ACTNUM",
+        values=actnum_vals,
+        discrete=True,
+    )
+    grid.set_actnum(actnum)
+
+    # =========================================================
+    # FACIES
+    # =========================================================
+    facies_3 = np.zeros_like(geomodel)
+
+    facies_3[np.isin(geomodel, [1, 3, 5, 7])] = 1
+    facies_3[np.isin(geomodel, [2, 4, 6, 8])] = 2
+    facies_3[geomodel == 9] = 3
+
+    facies = xtgeo.GridProperty(
+        grid,
+        name="FACIES",
+        values=facies_3,
+        discrete=True,
+    )
+
+    # =========================================================
+    # ROCK PROPERTIES
+    # =========================================================
+    poro = np.zeros_like(geomodel, dtype=float)
+    permx = np.zeros_like(geomodel, dtype=float)
+
+    rock_map = {
+        1: rock_types["M"],
+        2: rock_types["B"],
+        3: rock_types["F"],
+    }
+
+    for fid, props in rock_map.items():
+        mask = facies_3 == fid
+        poro[mask] = props["poro"]
+        permx[mask] = props["permx"]
+
+    poro[actnum_vals == 0] = 0
+    permx[actnum_vals == 0] = 0
+
+    poro = np.asfortranarray(poro)
+    permx = np.asfortranarray(permx)
+
+    poro_prop = xtgeo.GridProperty(
+        grid,
+        name="PORO",
+        values=poro
+    )
+
+    perm_prop = xtgeo.GridProperty(
+        grid,
+        name="PERMX",
+        values=permx
+)
+    # =========================================================
+    # EXPORT
+    # =========================================================
+    grid.to_file(out_file, fformat="grdecl")
+    facies.to_file(out_file, fformat="grdecl", append=True)
+    poro_prop.to_file(out_file, fformat="grdecl", append=True)
+    perm_prop.to_file(out_file, fformat="grdecl", append=True)
+
+    return grid
