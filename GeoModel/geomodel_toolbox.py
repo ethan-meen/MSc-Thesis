@@ -471,115 +471,6 @@ def generate_fracture_model(x, y, z, aperture, radius, azimuth, density, show_pl
 
     return mask, df
 
-#Another one below: delete this one 
-def export_grdecl_from_geomodel(
-    geomodel,
-    x_array,
-    y_array,
-    z_array,
-    rock_types,
-    out_file="grid.grdecl"
-):
-    """
-    Export GRDECL with:
-    - ACTNUM
-    - FACIES (collapsed internally)
-    - PORO
-    - PERMX
-    """
-
-    # --- orientation ---
-    geomodel = geomodel[:, :, ::-1]
-    z_export = z_array[::-1]
-
-    nx, ny, nz = len(x_array), len(y_array), len(z_array)
-
-    dx = x_array[1] - x_array[0]
-    dy = y_array[1] - y_array[0]
-    dz = abs(z_export[1] - z_export[0])
-
-    grid = xtgeo.create_box_grid(
-        dimension=(nx, ny, nz),
-        origin=(
-            x_array[0] - dx / 2,
-            y_array[0] - dy / 2,
-            z_export[0] - dz / 2
-        ),
-        increment=(dx, dy, dz)
-    )
-
-    # =========================================================
-    # ACTNUM
-    # =========================================================
-    actnum_vals = (geomodel != 0).astype(int)
-
-    actnum = xtgeo.GridProperty(
-        grid,
-        name="ACTNUM",
-        values=actnum_vals,
-        discrete=True,
-    )
-
-    grid.set_actnum(actnum)
-
-    # =========================================================
-    # INTERNAL FACIES MAPPING (FIXED LOGIC)
-    # =========================================================
-    facies_3 = np.zeros_like(geomodel)
-
-    # M (matrix / hyaloclastites)
-    facies_3[np.isin(geomodel, [1, 3, 5, 7])] = 1
-
-    # B (basalts)
-    facies_3[np.isin(geomodel, [2, 4, 6, 8])] = 2
-
-    # F (fractures)
-    facies_3[geomodel == 9] = 3
-
-    facies = xtgeo.GridProperty(
-        grid,
-        name="FACIES",
-        values=facies_3,
-        discrete=True,
-    )
-
-    # =========================================================
-    # ROCK PHYSICS (USER-DEFINED ONLY)
-    # =========================================================
-    poro = np.zeros_like(geomodel, dtype=float)
-    permx = np.zeros_like(geomodel, dtype=float)
-
-    # NOTE: order must match facies_3 definition
-    rock_map = {
-        1: rock_types["M"],
-        2: rock_types["B"],
-        3: rock_types["F"],
-    }
-
-    for fid, props in rock_map.items():
-        mask = facies_3 == fid
-        poro[mask] = props["poro"]
-        permx[mask] = props["permx"]
-
-    # inactive cells
-    poro[actnum_vals == 0] = 0
-    permx[actnum_vals == 0] = 0
-
-    poro_prop = xtgeo.GridProperty(grid, name="PORO", values=poro)
-    perm_prop = xtgeo.GridProperty(grid, name="PERMX", values=permx)
-
-    # =========================================================
-    # EXPORT
-    # =========================================================
-    grid.to_file(out_file, fformat="grdecl")
-
-    #actnum.to_file(out_file, fformat="grdecl", append=True)
-    facies.to_file(out_file, fformat="grdecl", append=True)
-    poro_prop.to_file(out_file, fformat="grdecl", append=True)
-    perm_prop.to_file(out_file, fformat="grdecl", append=True)
-
-    return grid
-
 def export_grdecl_from_geomodel(
     geomodel,
     x_array,
@@ -596,6 +487,15 @@ def export_grdecl_from_geomodel(
     # =========================================================
     geomodel = np.asarray(geomodel)
     z_array = np.asarray(z_array)
+
+    # Keep only z <= 0
+    keep = z_array <= 0
+
+    if not np.any(keep):
+        raise ValueError("No layers found with z <= 0")
+
+    geomodel = geomodel[:, :, keep]
+    z_array = z_array[keep]
 
     nx, ny, nz = len(x_array), len(y_array), len(z_array)
 
