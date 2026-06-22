@@ -483,12 +483,12 @@ def export_grdecl_from_geomodel(
     import xtgeo
 
     # =========================================================
-    # KEEP ORIGINAL ORIENTATION (DO NOT REVERSE Z)
+    # ENSURE Z IS ORDERED TOP -> BOTTOM
     # =========================================================
     geomodel = np.asarray(geomodel)
     z_array = np.asarray(z_array)
 
-    # Keep only z <= 0
+    # Keep only depths at or below datum
     keep = z_array <= 0
 
     if not np.any(keep):
@@ -497,15 +497,31 @@ def export_grdecl_from_geomodel(
     geomodel = geomodel[:, :, keep]
     z_array = z_array[keep]
 
+    # ---------------------------------------------------------
+    # Sort so first layer is closest to zero (top)
+    #
+    # Example:
+    # [-100, -80, -60, -40, -20, 0]
+    # becomes
+    # [0, -20, -40, -60, -80, -100]
+    # ---------------------------------------------------------
+    sort_idx = np.argsort(z_array)[::-1]
+
+    z_array = z_array[sort_idx]
+    geomodel = geomodel[:, :, sort_idx]
+
     nx, ny, nz = len(x_array), len(y_array), len(z_array)
 
     dx = x_array[1] - x_array[0]
     dy = y_array[1] - y_array[0]
-    dz = z_array[1] - z_array[0]   # assumes monotonic ordering
 
-    # Safety check (important)
+    if nz > 1:
+        dz = abs(np.mean(np.diff(z_array)))
+    else:
+        raise ValueError("Need at least two z layers")
+
     if dz == 0:
-        raise ValueError("z_array has zero spacing or is not sorted correctly")
+        raise ValueError("z_array spacing is zero")
 
     # =========================================================
     # GRID ORIGIN (TOP CORNER)
