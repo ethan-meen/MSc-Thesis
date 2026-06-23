@@ -608,3 +608,45 @@ def export_grdecl_from_geomodel(
     perm_prop.to_file(out_file, fformat="grdecl", append=True)
 
     return grid
+
+
+def export_wells_as_dev():
+
+    # Read wells
+    wells = pd.read_csv("gempy_inputs/borehole_data.csv")
+
+    # Sample DEM elevations
+    with rasterio.open("subset_dem.tif") as dem:
+        coords = list(zip(wells["x"], wells["y"]))
+        elevations = [v[0] for v in dem.sample(coords)]
+
+    wells["surface_z"] = elevations
+
+    # Bottom elevation = surface elevation - depth
+    wells["bottom_z"] = wells["depth"] - wells["surface_z"]
+
+    # Write ResInsight-style well path file
+    with open("vertical_wells.dev", "w") as f:
+
+        for _, row in wells.iterrows():
+
+            f.write(f"WELLNAME: {row['name']}\n")
+
+            # Wellhead
+            f.write(
+                f"{row['x']:.2f} "
+                f"{row['y']:.2f} "
+                f"-100.00 "
+                #f"{row['surface_z']:.2f} "
+                f"0.00\n"
+            )
+
+            # Vertical bottom
+            f.write(
+                f"{row['x']:.2f} "
+                f"{row['y']:.2f} "
+                f"{row['bottom_z']:.2f} "
+                f"{row['depth']:.2f}\n\n"
+            )
+
+    print("Created vertical_wells.dev")
