@@ -650,3 +650,101 @@ def export_wells_as_dev():
             )
 
     print("Created vertical_wells.dev")
+
+def export_wells_as_inc(
+    wells_csv_path,
+    dem_path,
+    x_array,
+    y_array,
+    z_array_flat,
+    output_path="sch.inc",
+):
+    """
+    Convert well intervals into Eclipse COMPDAT format.
+    """
+
+    wells = pd.read_csv(wells_csv_path)
+
+    # ----------------------------
+    # Open DEM
+    # ----------------------------
+    dem_src = rasterio.open(dem_path)
+
+    def get_dem_elevation(x, y):
+        """Return DEM elevation at (x,y)."""
+        row, col = dem_src.index(x, y)
+        return dem_src.read(1)[row, col]
+
+    # ----------------------------
+    # Grid helpers
+    # ----------------------------
+    def xyz_to_ijk(x, y, z):
+        """Convert coordinates to Eclipse-style 1-based indices."""
+        i = int(np.argmin(np.abs(x_array - x))) + 1
+        j = int(np.argmin(np.abs(y_array - y))) + 1
+        k = int(np.argmin(np.abs(z_array_flat - z))) + 1
+        return i, j, k
+
+    completions = []
+
+    # ----------------------------
+    # Loop wells
+    # ----------------------------
+    for _, w in wells.iterrows():
+
+        name = w["name"]
+        x = w["x"]
+        y = w["y"]
+
+        z_top = w["casing"]
+        z_bottom = w["depth"]
+
+        z_surface = get_dem_elevation(x, y)
+
+        # convert to absolute elevations
+        z_top_abs = np.abs(z_surface - z_top)
+        z_bot_abs = np.abs(z_surface - z_bottom)
+
+        z_high = min(z_top_abs, z_bot_abs)
+        z_low = max(z_top_abs, z_bot_abs)
+
+        # skip wells entirely above datum
+        if z_low < 0:
+            continue
+
+        # truncate completion if top is above datum
+        z_high = max(z_high, 0.0)
+
+        # convert to K indices
+        k1 = int(np.argmin(np.abs(z_array_flat - z_high))) + 1
+        k2 = int(np.argmin(np.abs(z_array_flat - z_low))) + 1
+
+        if k1 > k2:
+            k1, k2 = k2, k1
+
+        # clamp to model bounds
+        k1 = max(1, min(k1, len(z_array_flat)))
+        k2 = max(1, min(k2, len(z_array_flat)))
+
+        # I/J location (using surface level reference)
+        i, j, _ = xyz_to_ijk(x, y, z_array_flat[0])
+
+        completions.append((name, i, j, k1, k2))
+
+    dem_src.close()
+
+    # ----------------------------
+    # Write COMPDAT file
+    # ----------------------------
+    with open(output_path, "w") as f:
+        f.write("-- perforations in Eclipse format I, J, K1-K2, 1-based indices\n")
+        f.write("COMPDAT\n")
+
+        for name, i, j, k1, k2 in completions:
+            f.write(f"PRD-{name} {i} {j} {k1} {k2} /\n")
+
+        f.write("/\n")
+
+    print(f"{output_path} written with {len(completions)} completions.")
+
+    return completions
